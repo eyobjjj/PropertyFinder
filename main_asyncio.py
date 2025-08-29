@@ -7,9 +7,9 @@ from google_sheet import upload_data_to_sheet
 from requestmask import get_random_headers, build_url
 
 # Config
-MAX_PROPERTIES_PER_PAGE = 25
+MAX_PROPERTIES_PER_PAGE = 20
 MAX_PAGES = 100
-CONCURRENT_REQUESTS = 5
+CONCURRENT_REQUESTS = 3
 REQUEST_DELAY = 0  # seconds
 
 # Logging setup
@@ -104,7 +104,7 @@ def input_query_parameters():
         "sa": "Saudi Arabia"
     }
     Locations = {
-        "ae": {0: "Dubai", 1: "Abu Dhabi", 2: "Sharjah", 3: "Ajman", 4: "Ras Al Khaimah", 5: "Al Ain", 6: "Fujairah", 7: "Umm Al Quwain"},
+        "ae": {1: "Dubai", 6: "Abu Dhabi", 4: "Sharjah", 5: "Ajman", 3: "Ras Al Khaimah", 8: "Al Ain", 7: "Fujairah", 2: "Umm Al Quwain"},
         "qa": {9: "Doha", 4: "Lusail", 2: "Al Wakra", 5: "Umm Salal Mohammad", 6: "Al Shamal", 3: "Al Khor", 7: "Al Daayen"},
         "bh": {34: "Manama", 49: "Riffa", 12: "Muharraq", 00: "Isa Town", 00: "Hamad Town", 00: "Sitra", 00: "Jidhafs"},
         "eg": {2254: "Cairo", 20663: "Giza", 30754: "Alexandria", 00: "Mansoura", 00: "Tanta", 00: "Asyut", 00: "Ismailia"},

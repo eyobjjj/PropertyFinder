@@ -1,5 +1,7 @@
 # 🏠 Property Finder Scraper
 
+[![Demo Screenshot](Images/demo.png)](https://docs.google.com/spreadsheets/d/1Ch8FTlwN_bYMZHVGRLDpee7wyMHV1FoWpo3qewoewYc)
+
 A Python-based web scraper for extracting real estate listings from **Property Finder** across multiple countries.  
 The scraper supports both **synchronous (requests)** and **asynchronous (httpx + asyncio)** modes and automatically uploads results to **Google Sheets**.
 
@@ -38,6 +40,13 @@ README.md             # ...
 - Two scraping modes:
   - **Sync** (`main.py`) → stable, simple
   - **Async** (`main_asyncio.py`) → fast, concurrent
+
+---
+
+## 📊 Demo / Example Output
+
+You can view a live example of scraped data here:  
+👉 [Google Sheet Example](https://docs.google.com/spreadsheets/d/1Ch8FTlwN_bYMZHVGRLDpee7wyMHV1FoWpo3qewoewYc)
 
 ---
 
