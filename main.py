@@ -3,19 +3,21 @@ from bs4 import BeautifulSoup
 import json
 import time
 import logging
+from tqdm import tqdm
 from google_sheet import upload_data_to_sheet
 from requestmask import get_random_headers, build_url
 
-# Setup logging for better debugging & monitoring
+# Setup logging — only WARNING+ shown during the run so tqdm bar is clean
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
 MAX_PROPERTIES_PER_PAGE = 20
-MAX_PAGES = 100
+MAX_PAGES = 100 # adjust as needed based on expected total results and rate limits
 REQUEST_RETRIES = 3
 REQUEST_DELAY = 0  # seconds
+
 
 def fetch_properties(query, page):
     """Fetch property JSON data for given query and page number, with retry and error handling."""
@@ -28,20 +30,15 @@ def fetch_properties(query, page):
 
     for attempt in range(REQUEST_RETRIES):
         try:
-            logging.info(f"Requesting page {page} (Attempt {attempt + 1})")
             response = requests.get(target_url, headers=get_random_headers(), timeout=10)
             response.raise_for_status()
             soup = BeautifulSoup(response.content, "html.parser")
             script_tag = soup.find("script", id="__NEXT_DATA__")
             if not script_tag or not script_tag.string:
-                logging.warning("Failed to find JSON script tag on page %d", page)
                 return None
-            json_data = script_tag.string
-            return json_data
-        except requests.RequestException as e:
-            logging.error(f"Request error on page {page}: {e}")
+            return script_tag.string
+        except requests.RequestException:
             time.sleep(REQUEST_DELAY)
-    logging.error(f"Failed to fetch page {page} after {REQUEST_RETRIES} attempts")
     return None
 
 
@@ -53,8 +50,7 @@ def extract_property_data(json_data):
     try:
         data = json.loads(json_data)
         properties = data['props']['pageProps']['searchResult']['properties']
-    except (json.JSONDecodeError, KeyError) as e:
-        logging.error(f"Error parsing JSON data: {e}")
+    except (json.JSONDecodeError, KeyError):
         return []
 
     property_list = []
@@ -85,12 +81,11 @@ def extract_property_data(json_data):
                 "Broker Name": prop.get("broker", {}).get("name"),
                 "Broker Email": prop.get("broker", {}).get("email"),
                 "Broker Phone": prop.get("broker", {}).get("phone"),
-                # "Description": (prop.get("description") or "")[:150] + ("..." if prop.get("description") else ""),
                 "Description": (lambda d: (', '.join(line.strip('- ').strip() for line in (d or '').splitlines())).strip()[:150] + ('...' if d and len(d) > 150 else ''))(prop.get("description"))
             }
             property_list.append(data)
-        except Exception as e:
-            logging.warning(f"Error extracting property data: {e}")
+        except Exception:
+            pass
     return property_list
 
 
@@ -133,23 +128,23 @@ def input_query_parameters():
             print("Invalid input, please try again.\n")
 
     print("=== Property Search Query Parameters ===")
-    country = get_choice("Select a country code:", Countries, default='ae')
+    country = get_choice("Select a country code, [default=ae]:", Countries, default='ae')
     query = {'country': country}
 
     locations = Locations.get(country, Locations['ae'])
-    location_id = get_choice("Select a location value:", locations, default=list(locations.keys())[0], key_type=int)
+    location_id = get_choice("Select a location value [default=dubai]:", locations, default=list(locations.keys())[0], key_type=int)
     query['location'] = location_id
 
-    category_id = get_choice("Select a category ID:", Categories, default=1, key_type=int)
+    category_id = get_choice("Select a category ID [default=1]:", Categories, default=1, key_type=int)
     query['category'] = category_id
 
-    furnishing_id = get_choice("Select a furnishing option ID:", Furnishing, default=0, key_type=int)
+    furnishing_id = get_choice("Select a furnishing option ID [default=0]:", Furnishing, default=0, key_type=int)
     query['furnishing'] = furnishing_id
 
-    rental_period = get_choice("Select a rental period code:", RentalPeriods, default='y')
+    rental_period = get_choice("Select a rental period code [default=y]:", RentalPeriods, default='y')
     query['rental_period'] = rental_period
 
-    sort_by = get_choice("Select a sort by code:", SortByOptions, default='mr')
+    sort_by = get_choice("Select a sort by code [default=mr]:", SortByOptions, default='mr')
     query['sort_by'] = sort_by
 
     return query
@@ -159,28 +154,47 @@ def main():
     all_properties = []
     query = input_query_parameters()
 
-    for page in range(1, MAX_PAGES + 1):
-        json_data = fetch_properties(query, page)
-        if not json_data:
-            logging.warning("No data returned, stopping pagination.")
-            break
+    start_time = time.time()
 
-        properties = extract_property_data(json_data)
-        all_properties.extend(properties)
+    bar_format = "Scraping: {percentage:3.0f}%|{bar}| {n}/{total} pages [{elapsed}<{remaining}, {rate_fmt}{postfix}]"
 
-        if len(properties) < MAX_PROPERTIES_PER_PAGE:
-            logging.info(f"Less than {MAX_PROPERTIES_PER_PAGE} properties found on page {page}, assuming last page.")
-            break
+    with tqdm(total=MAX_PAGES, desc="Scraping", unit="page", bar_format=bar_format, dynamic_ncols=True) as pbar:
+        for page in range(1, MAX_PAGES + 1):
+            json_data = fetch_properties(query, page)
 
-        time.sleep(REQUEST_DELAY)  # polite delay
+            if not json_data:
+                pbar.set_postfix(added=len(all_properties), status="no data")
+                pbar.update(1)
+                break
 
-    logging.info(f"Total properties fetched: {len(all_properties)}")
+            properties = extract_property_data(json_data)
+
+            if not properties:
+                pbar.set_postfix(added=len(all_properties), status="empty")
+                pbar.update(1)
+                break
+
+            all_properties.extend(properties)
+            pbar.set_postfix(added=len(all_properties), status="added")
+            pbar.update(1)
+
+            if len(properties) < MAX_PROPERTIES_PER_PAGE:
+                break
+
+            time.sleep(REQUEST_DELAY)
+
+    elapsed = time.time() - start_time
+    mins, secs = divmod(int(elapsed), 60)
+    print(f"\n✔ Scraping complete — {len(all_properties)} properties found in {mins}m {secs}s")
 
     if all_properties:
+        print("⏳ Uploading to Google Sheet...")
+        upload_start = time.time()
         upload_data_to_sheet(all_properties, query["country"])
-        logging.info("Data uploaded to Google Sheet successfully.")
+        upload_elapsed = time.time() - upload_start
+        print(f"✔ Upload complete in {upload_elapsed:.1f}s")
     else:
-        logging.warning("No properties found, nothing to upload.")
+        print("⚠ No properties found, nothing to upload.")
 
 
 if __name__ == "__main__":

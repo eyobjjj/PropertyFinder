@@ -25,7 +25,7 @@ def upload_data_to_sheet(data, sheet_name: str):
     except gspread.exceptions.WorksheetNotFound:
         worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=str(len(df)), cols=str(len(df.columns)))
 
-    worksheet.update([df.columns.values.tolist()] + df.values.tolist())
+    worksheet.update([df.columns.values.tolist()] + df.fillna("").values.tolist())
 
 # def append_data_to_sheet(data, sheet_name: str):
 #     """

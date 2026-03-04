@@ -6,3 +6,4 @@ python-dotenv
 pandas
 gspread
 oauth2client
+tqdm

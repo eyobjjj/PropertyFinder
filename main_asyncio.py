@@ -2,18 +2,20 @@ import asyncio
 import httpx
 from bs4 import BeautifulSoup
 import json
+import time
 import logging
+from tqdm import tqdm
 from google_sheet import upload_data_to_sheet
 from requestmask import get_random_headers, build_url
 
 # Config
 MAX_PROPERTIES_PER_PAGE = 20
-MAX_PAGES = 100
+MAX_PAGES = 100 # adjust as needed based on expected total results and rate limits
 CONCURRENT_REQUESTS = 3
 REQUEST_DELAY = 0  # seconds
 
-# Logging setup
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# Suppress noisy logs so the tqdm bar stays clean
+logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 async def fetch_properties(query, page, client, semaphore):
@@ -24,25 +26,21 @@ async def fetch_properties(query, page, client, semaphore):
         f"&rp={query['rental_period']}&ob={query['sort_by']}&page={page}"
     )
     target_url = build_url(url)
-
     headers = get_random_headers()
 
     async with semaphore:
         try:
-            logging.info(f"Fetching page {page}")
             response = await client.get(target_url, headers=headers, timeout=10)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, "html.parser")
             script_tag = soup.find("script", id="__NEXT_DATA__")
             if not script_tag or not script_tag.string:
-                logging.warning(f"No data found on page {page}")
-                return None
-            return script_tag.string
-        except httpx.HTTPError as e:
-            logging.error(f"HTTP error on page {page}: {e}")
-        except Exception as e:
-            logging.error(f"Unexpected error on page {page}: {e}")
-        return None
+                return page, None
+            return page, script_tag.string
+        except httpx.HTTPError:
+            return page, None
+        except Exception:
+            return page, None
 
 
 def extract_property_data(json_data):
@@ -53,8 +51,7 @@ def extract_property_data(json_data):
     try:
         data = json.loads(json_data)
         properties = data['props']['pageProps']['searchResult']['properties']
-    except (json.JSONDecodeError, KeyError) as e:
-        logging.error(f"JSON parsing error: {e}")
+    except (json.JSONDecodeError, KeyError):
         return []
 
     property_list = []
@@ -85,12 +82,11 @@ def extract_property_data(json_data):
                 "Broker Name": prop.get("broker", {}).get("name"),
                 "Broker Email": prop.get("broker", {}).get("email"),
                 "Broker Phone": prop.get("broker", {}).get("phone"),
-                # "Description": (prop.get("description") or "")[:150] + ("..." if prop.get("description") else ""),
                 "Description": (lambda d: (', '.join(line.strip('- ').strip() for line in (d or '').splitlines())).strip()[:150] + ('...' if d and len(d) > 150 else ''))(prop.get("description"))
             }
             property_list.append(data)
-        except Exception as e:
-            logging.warning(f"Failed to extract property data: {e}")
+        except Exception:
+            pass
     return property_list
 
 
@@ -133,23 +129,23 @@ def input_query_parameters():
             print("Invalid input, please try again.\n")
 
     print("=== Property Search Query Parameters ===")
-    country = get_choice("Select a country code:", Countries, default='ae')
+    country = get_choice("Select a country code, [default: ae]:", Countries, default='ae')
     query = {'country': country}
 
     locations = Locations.get(country, Locations['ae'])
-    location_id = get_choice("Select a location value:", locations, default=list(locations.keys())[0], key_type=int)
+    location_id = get_choice("Select a location value, [default: dubai]:", locations, default=list(locations.keys())[0], key_type=int)
     query['location'] = location_id
 
-    category_id = get_choice("Select a category ID:", Categories, default=1, key_type=int)
+    category_id = get_choice("Select a category ID, [default: 1]:", Categories, default=1, key_type=int)
     query['category'] = category_id
 
-    furnishing_id = get_choice("Select a furnishing option ID:", Furnishing, default=0, key_type=int)
+    furnishing_id = get_choice("Select a furnishing option ID, [default: 0]:", Furnishing, default=0, key_type=int)
     query['furnishing'] = furnishing_id
 
-    rental_period = get_choice("Select a rental period code:", RentalPeriods, default='y')
+    rental_period = get_choice("Select a rental period code, [default: y]:", RentalPeriods, default='y')
     query['rental_period'] = rental_period
 
-    sort_by = get_choice("Select a sort by code:", SortByOptions, default='mr')
+    sort_by = get_choice("Select a sort by code, [default: mr]:", SortByOptions, default='mr')
     query['sort_by'] = sort_by
 
     return query
@@ -157,32 +153,57 @@ def input_query_parameters():
 
 async def main():
     query = input_query_parameters()
-    all_properties = []
     semaphore = asyncio.Semaphore(CONCURRENT_REQUESTS)
+    start_time = time.time()
+
+    # results_by_page will store (page -> list of properties), ordered later
+    results_by_page: dict[int, list] = {}
+    added_count = 0
+    last_page_reached = MAX_PAGES
+
+    bar_format = "Scraping: {percentage:3.0f}%|{bar}| {n}/{total} pages [{elapsed}<{remaining}, {rate_fmt}{postfix}]"
 
     async with httpx.AsyncClient() as client:
-        tasks = []
-        for page in range(1, MAX_PAGES + 1):
-            tasks.append(fetch_properties(query, page, client, semaphore))
+        tasks = {
+            asyncio.ensure_future(fetch_properties(query, page, client, semaphore)): page
+            for page in range(1, MAX_PAGES + 1)
+        }
 
-        results = await asyncio.gather(*tasks)
+        with tqdm(total=MAX_PAGES, desc="Scraping", unit="page", bar_format=bar_format, dynamic_ncols=True) as pbar:
+            for coro in asyncio.as_completed(tasks.keys()):
+                page, json_data = await coro
+                properties = extract_property_data(json_data)
+                results_by_page[page] = properties
+                added_count += len(properties)
 
-        for page, json_data in enumerate(results, start=1):
-            properties = extract_property_data(json_data)
-            if not properties:
-                break
-            all_properties.extend(properties)
-            if len(properties) < MAX_PROPERTIES_PER_PAGE:
-                logging.info(f"Last page reached at page {page}.")
-                break
-            await asyncio.sleep(REQUEST_DELAY)
+                status = "added" if properties else ("empty" if json_data else "no data")
+                pbar.set_postfix(added=added_count, status=status)
+                pbar.update(1)
 
-    logging.info(f"Fetched {len(all_properties)} total properties.")
+    # Process results in page order to detect the last page correctly
+    all_properties = []
+    for page in range(1, MAX_PAGES + 1):
+        props = results_by_page.get(page, [])
+        if not props:
+            last_page_reached = page
+            break
+        all_properties.extend(props)
+        if len(props) < MAX_PROPERTIES_PER_PAGE:
+            last_page_reached = page
+            break
+
+    elapsed = time.time() - start_time
+    mins, secs = divmod(int(elapsed), 60)
+    print(f"\n✔ Scraping complete — {len(all_properties)} properties found in {mins}m {secs}s")
+
     if all_properties:
+        print("⏳ Uploading to Google Sheet...")
+        upload_start = time.time()
         upload_data_to_sheet(all_properties, query["country"])
-        logging.info("Upload to Google Sheet complete.")
+        upload_elapsed = time.time() - upload_start
+        print(f"✔ Upload complete in {upload_elapsed:.1f}s")
     else:
-        logging.warning("No properties fetched to upload.")
+        print("⚠ No properties found, nothing to upload.")
 
 
 if __name__ == "__main__":

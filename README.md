@@ -1,6 +1,16 @@
 # 🏠 Property Finder Scraper
 
-[![Demo Screenshot](Images/demo.png)](https://docs.google.com/spreadsheets/d/1Ch8FTlwN_bYMZHVGRLDpee7wyMHV1FoWpo3qewoewYc)
+
+[Watch Demo Video](Videos/demo.mp4)
+---
+
+[![Demo Screenshot](Images/demo.png)](https://docs.google.com/spreadsheets/d/1GkYK7A4gPu1g07FRdA-XG8RigBO5gdpevhmuJqNbOp4)
+
+[![Demo Screenshot](Images/1.png)](Videos/demo.mp4)
+
+[![Demo Screenshot](Images/2.png)](Videos/demo.mp4)
+
+[![Demo Screenshot](Images/3.png)](Videos/demo.mp4)
 
 A Python-based web scraper for extracting real estate listings from **Property Finder** across multiple countries.  
 The scraper supports both **synchronous (requests)** and **asynchronous (httpx + asyncio)** modes and automatically uploads results to **Google Sheets**.
@@ -46,7 +56,7 @@ README.md             # ...
 ## 📊 Demo / Example Output
 
 You can view a live example of scraped data here:  
-👉 [Google Sheet Example](https://docs.google.com/spreadsheets/d/1Ch8FTlwN_bYMZHVGRLDpee7wyMHV1FoWpo3qewoewYc)
+👉 [Google Sheet Example](https://docs.google.com/spreadsheets/d/1GkYK7A4gPu1g07FRdA-XG8RigBO5gdpevhmuJqNbOp4)
 
 ---
 
